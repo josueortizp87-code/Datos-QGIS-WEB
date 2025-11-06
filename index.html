@@ -3,18 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mapa de Tramos por Circuito</title>
+<title>Mapa de Tramos por Circuito + Municipios</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 <style>
-
     html, body, #map { height: 100%; margin: 0; }
-
-    .leaflet-control-layers-expanded { max-height: 280px; overflow: auto; }
-
+    .leaflet-control-layers-expanded { max-height: 300px; overflow: auto; }
     .legend { background: white; padding: 8px 10px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-
     .legend .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-
     .swatch { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
 </style>
 </head>
@@ -23,196 +18,112 @@
  
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
-
-    // === CONFIGURA TU RUTA AL GEOJSON ===
-
-    // Si este index.html está en el MISMO repo y carpeta que tu archivo, deja el nombre tal cual (con %20 si hay espacios).
-
-    // Si prefieres, pega aquí la URL RAW completa de GitHub (https://raw.githubusercontent.com/...).
-
-    const GEOJSON_URL = 'Circuitos%20Juticalpa.geojson';
+    // === CONFIGURA LAS RUTAS A TUS GEOJSON ===
+    // Si este index.html está en la misma carpeta que los archivos, usa los nombres tal cual (con %20 en espacios)
+    // o pon aquí las URL RAW completas de GitHub.
+    const CIRCUITOS_URL = 'Circuitos%20Juticalpa.geojson';
+    const MUNICIPIOS_URL = 'Municipios%20de%20Olancho1.geojson';
  
-    // Paleta de colores para hasta 12 capas (se repetirá si hay más)
-
-    const COLORS = [
-
-      '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b',
-
-      '#e377c2','#7f7f7f','#bcbd22','#17becf','#a55194','#393b79'
-
-    ];
+    // Paleta de colores para circuitos
+    const COLORS = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#a55194','#393b79'];
  
-    // Crea el mapa
-
+    // Crear mapa
     const map = L.map('map', { zoomControl: true }).setView([14.7, -86], 9);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-
-      maxZoom: 19,
-
-      attribution: '&copy; OpenStreetMap'
-
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
  
-    // Detecta automáticamente el nombre del campo "Circuito" en properties
-
-    function detectCircuitField(props){
-
+    // Utilidades de detección de campos
+    function detectField(props, preferredList, containsKey){
       if(!props) return null;
-
       const keys = Object.keys(props);
-
-      // Preferidos por nombre
-
-      const preferred = ['Circuito','CIRCUITO','circuito','Circuit','CIRCUIT','circuit'];
-
-      for(const k of preferred){ if(k in props) return k; }
-
-      // Si no, cualquier clave que contenga la palabra circuit
-
-      const byContains = keys.find(k => k.toLowerCase().includes('circuit'));
-
-      if(byContains) return byContains;
-
-      // Como último recurso, intenta con la primera string
-
-      const firstString = keys.find(k => typeof props[k] === 'string');
-
-      return firstString || null;
-
+      for(const k of preferredList){ if(k in props) return k; }
+      const contains = keys.find(k => k.toLowerCase().includes(containsKey));
+      if(contains) return contains;
+      return keys.find(k => typeof props[k] === 'string') || null;
     }
  
-    // Cargar y dibujar
-
-    fetch(GEOJSON_URL)
-
-      .then(r => r.json())
-
-      .then(data => {
-
-        const feats = (data.type === 'FeatureCollection') ? data.features : [data];
-
-        if(!feats || !feats.length) throw new Error('El GeoJSON no contiene features');
+    function detectCircuitField(props){
+      return detectField(props, ['Circuito','CIRCUITO','circuito','Circuit','CIRCUIT','circuit'], 'circuit');
+    }
  
-        const circuitField = detectCircuitField(feats[0].properties);
-
-        if(!circuitField) throw new Error('No se pudo detectar el campo de circuito. Por favor edita detectCircuitField().');
+    // CARGA DE CAPAS
+    Promise.all([
+      fetch(CIRCUITOS_URL).then(r => r.json()),
+      fetch(MUNICIPIOS_URL).then(r => r.json())
+    ])
+    .then(([circuitsData, municipiosData]) => {
+      const overlays = {};
+      const allBounds = L.latLngBounds();
  
-        // Agrupar por circuito
-
-        const groups = new Map();
-
-        for(const f of feats){
-
-          const p = f.properties || {};
-
-          const keyRaw = p[circuitField];
-
-          const key = (keyRaw === undefined || keyRaw === null || keyRaw === '') ? 'SIN_VALOR' : String(keyRaw);
-
-          if(!groups.has(key)) groups.set(key, []);
-
-          groups.get(key).push(f);
-
-        }
- 
-        // Crear capas por circuito
-
-        const overlays = {};
-
-        const bounds = L.latLngBounds();
-
-        const entries = Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0], 'es'));
- 
-        entries.forEach(([circuit, features], i) => {
-
-          const color = COLORS[i % COLORS.length];
-
-          const layer = L.geoJSON({type:'FeatureCollection', features}, {
-
-            style: () => ({ color, weight: 2, opacity: 0.9 }),
-
-            onEachFeature: (feature, layer) => {
-
-              const props = feature.properties || {};
-
-              const items = Object.entries(props).map(([k,v])=>`<b>${k}</b>: ${v}`);
-
-              layer.bindPopup(`<div style="min-width:220px"><b>${circuitField}:</b> ${circuit}<br>${items.join('<br>')}</div>`);
-
-            }
-
-          });
-
-          layer.addTo(map);
-
-          overlays[`${circuit} (${features.length})`] = layer;
-
-          try { layer.getBounds && bounds.extend(layer.getBounds()); } catch(e) {}
-
-        });
- 
-        // Ajustar vista a todo
-
-        if(bounds.isValid()) map.fitBounds(bounds, { padding: [20,20] });
- 
-        // Control de capas
-
-        L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
- 
-        // Leyenda
-
-        const legend = L.control({position: 'bottomleft'});
-
-        legend.onAdd = function(){
-
-          const div = L.DomUtil.create('div','legend');
-
-          div.innerHTML = '<b>Circuitos</b>';
-
-          entries.forEach(([circuit], i) => {
-
-            const color = COLORS[i % COLORS.length];
-
-            const row = document.createElement('div');
-
-            row.className = 'row';
-
-            const sw = document.createElement('span');
-
-            sw.className = 'swatch';
-
-            sw.style.background = color;
-
-            row.appendChild(sw);
-
-            const label = document.createElement('span');
-
-            label.textContent = circuit;
-
-            row.appendChild(label);
-
-            div.appendChild(row);
-
-          });
-
-          return div;
-
-        };
-
-        legend.addTo(map);
-
-      })
-
-      .catch(err => {
-
-        console.error(err);
-
-        alert('No se pudo cargar el GeoJSON. Revisa la ruta GEOJSON_URL en el código.');
-
+      // --- Municipios (polígonos) ---
+      const municipiosLayer = L.geoJSON(municipiosData, {
+        style: () => ({ color: '#444', weight: 1, fillOpacity: 0.05 })
       });
+      municipiosLayer.addTo(map); // debajo de los circuitos
+      overlays['Municipios'] = municipiosLayer;
+      try { if(municipiosLayer.getBounds) allBounds.extend(municipiosLayer.getBounds()); } catch(e) {}
+ 
+      // --- Circuitos (tramos) agrupados y coloreados ---
+      const feats = (circuitsData.type === 'FeatureCollection') ? circuitsData.features : [circuitsData];
+      if(!feats || !feats.length) throw new Error('El GeoJSON de circuitos no contiene features');
+ 
+      const circuitField = detectCircuitField(feats[0].properties);
+      if(!circuitField) throw new Error('No se pudo detectar el campo de circuito en los tramos.');
+ 
+      const groups = new Map();
+      for(const f of feats){
+        const p = f.properties || {};
+        const keyRaw = p[circuitField];
+        const key = (keyRaw === undefined || keyRaw === null || keyRaw === '') ? 'SIN_VALOR' : String(keyRaw);
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(f);
+      }
+ 
+      const entries = Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0], 'es'));
+      entries.forEach(([circuit, features], i) => {
+        const color = COLORS[i % COLORS.length];
+        const layer = L.geoJSON({type:'FeatureCollection', features}, {
+          style: () => ({ color, weight: 2, opacity: 0.9 }),
+          onEachFeature: (feature, layer) => {
+            const props = feature.properties || {};
+            const items = Object.entries(props).map(([k,v])=>`<b>${k}</b>: ${v}`);
+            layer.bindPopup(`<div style=\"min-width:220px\"><b>${circuitField}:</b> ${circuit}<br>${items.join('<br>')}</div>`);
+          }
+        });
+        layer.addTo(map);
+        overlays[`Circuito: ${circuit} (${features.length})`] = layer;
+        try { if(layer.getBounds) allBounds.extend(layer.getBounds()); } catch(e) {}
+      });
+ 
+      if(allBounds.isValid()) map.fitBounds(allBounds, { padding: [20,20] });
+ 
+      L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
+ 
+      // Leyenda de circuitos
+      const legend = L.control({position: 'bottomleft'});
+      legend.onAdd = function(){
+        const div = L.DomUtil.create('div','legend');
+        div.innerHTML = '<b>Circuitos</b>';
+        entries.forEach(([circuit], i) => {
+          const color = COLORS[i % COLORS.length];
+          const row = document.createElement('div');
+          row.className = 'row';
+          const sw = document.createElement('span');
+          sw.className = 'swatch';
+          sw.style.background = color;
+          row.appendChild(sw);
+          const label = document.createElement('span');
+          label.textContent = circuit;
+          row.appendChild(label);
+          div.appendChild(row);
+        });
+        return div;
+      };
+      legend.addTo(map);
+    })
+    .catch(err => {
+      console.error(err);
+      alert('No se pudo cargar alguno de los GeoJSON. Revisa las rutas en el código.');
+    });
 </script>
 </body>
 </html>
-
- 
