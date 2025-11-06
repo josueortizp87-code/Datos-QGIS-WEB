@@ -11,6 +11,7 @@
     .legend { background: white; padding: 8px 10px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     .legend .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
     .swatch { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+  .mun-label{ background:rgba(255,255,255,.85); padding:2px 6px; border-radius:6px; border:1px solid #cfcfcf; font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#222; white-space:nowrap; pointer-events:none; box-shadow:0 1px 2px rgba(0,0,0,.15); }
 </style>
 </head>
 <body>
@@ -62,6 +63,26 @@
       overlays['Municipios'] = municipiosLayer;
       try { if(municipiosLayer.getBounds) allBounds.extend(municipiosLayer.getBounds()); } catch(e) {}
  
+      // === Etiquetas de Municipios (una por municipio, usando propiedad "nombre") ===
+      const labelsPane = map.createPane('labels');
+      labelsPane.style.zIndex = 650; // por encima de polígonos
+      labelsPane.style.pointerEvents = 'none';
+      const municipioLabels = L.layerGroup([], { pane: 'labels' });
+      const muniFeats = (municipiosData.type === 'FeatureCollection') ? municipiosData.features : [municipiosData];
+      muniFeats.forEach(f => {
+        const props = f.properties || {};
+        const name = props.nombre || props.NOMBRE || props.Nombre;
+        if(!name) return;
+        try {
+          const c = turf.centroid(f);
+          const [lng, lat] = c.geometry.coordinates;
+          const label = L.marker([lat, lng], { icon: L.divIcon({ className: 'mun-label', html: name }) });
+          municipioLabels.addLayer(label);
+        } catch(err) { /* continuar si algún feature falla */ }
+      });
+      municipioLabels.addTo(map);
+      overlays['Etiquetas Municipios'] = municipioLabels;
+ 
       // --- Circuitos (tramos) agrupados y coloreados ---
       const feats = (circuitsData.type === 'FeatureCollection') ? circuitsData.features : [circuitsData];
       if(!feats || !feats.length) throw new Error('El GeoJSON de circuitos no contiene features');
@@ -79,6 +100,10 @@
       }
  
       const entries = Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0], 'es'));
+ 
+      // Guardar colección completa para búsqueda espacial
+      circuitsFC = { type:'FeatureCollection', features: feats };
+ 
       entries.forEach(([circuit, features], i) => {
         const color = COLORS[i % COLORS.length];
         const layer = L.geoJSON({type:'FeatureCollection', features}, {
