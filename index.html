@@ -1,40 +1,77 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mapa de Tramos por Circuito + Municipios</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-<style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mapa de Tramos por Circuito + Municipios</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <style>
     html, body, #map { height: 100%; margin: 0; }
-    .leaflet-control-layers-expanded { max-height: 300px; overflow: auto; }
+    .leaflet-control-layers-expanded { max-height: 320px; overflow: auto; }
     .legend { background: white; padding: 8px 10px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     .legend .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
     .swatch { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
-  .mun-label{ background:rgba(255,255,255,.9); padding:2px 6px; border-radius:6px; border:1px solid #cfcfcf; font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#222; white-space:nowrap; pointer-events:none; box-shadow:0 1px 2px rgba(0,0,0,.15); }
-.status-badge{ position:absolute; left:10px; bottom:10px; background:rgba(0,0,0,.6); color:#fff; padding:4px 8px; border-radius:8px; font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; z-index:1000; }
-</style>
+    .mun-label{ background:rgba(255,255,255,.9); padding:2px 6px; border-radius:6px; border:1px solid #cfcfcf; font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#222; white-space:nowrap; pointer-events:none; box-shadow:0 1px 2px rgba(0,0,0,.15); }
+    .follow-btn{ background:#fff;border:1px solid #ccc;border-radius:8px;padding:6px 10px;box-shadow:0 1px 3px rgba(0,0,0,.2);cursor:pointer }
+    .status-badge{ position:absolute; left:10px; bottom:10px; background:rgba(0,0,0,.6); color:#fff; padding:4px 8px; border-radius:8px; font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; z-index:1000; display:none }
+  </style>
 </head>
 <body>
-<div id="map"></div>
-<div id="status" class="status-badge" style="display:none"></div>
- 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script>
-    // === CONFIGURA LAS RUTAS A TUS GEOJSON ===
-    // Si este index.html está en la misma carpeta que los archivos, usa los nombres tal cual (con %20 en espacios)
-    // o pon aquí las URL RAW completas de GitHub.
-    const CIRCUITOS_URL = 'Circuitos%20Juticalpa.geojson';
-    const MUNICIPIOS_URL = 'Municipios%20de%20Olancho1.geojson';
- 
-    // Paleta de colores para circuitos
+  <div id="map"></div>
+  <div id="status" class="status-badge"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script>
+    // =========================
+    //  CONFIGURA RUTAS GEOJSON (usamos RAW por defecto para evitar 404)
+    // =========================
+    const CIRCUITOS_URL  = 'https://raw.githubusercontent.com/josueortizp87-code/Datos-QGIS-WEB/main/Circuitos%20Juticalpa.geojson';
+    const MUNICIPIOS_URL = 'https://raw.githubusercontent.com/josueortizp87-code/Datos-QGIS-WEB/main/Municipios%20de%20Olancho1.geojson';
+    // Si prefieres archivos locales junto al index.html, reemplaza por nombres relativos.
+
     const COLORS = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#a55194','#393b79'];
- 
-    // Crear mapa
+
+    // =========================
+    //  MAPA BASE
+    // =========================
     const map = L.map('map', { zoomControl: true }).setView([14.7, -86], 9);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
- 
-    // Utilidades de detección de campos
+
+    // =========================
+    //  UTILIDADES
+    // =========================
+    const statusBox = document.getElementById('status');
+    function setStatus(msg){ statusBox.textContent = msg; statusBox.style.display = msg ? 'block' : 'none'; }
+
+    // Conversión automática de enlaces GitHub "blob" -> "raw"
+    function toRawIfGithub(url){
+      if(!url) return url;
+      try {
+        const u = new URL(url, location.href);
+        if(u.hostname === 'github.com' && u.pathname.includes('/blob/')){
+          return u.href.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/blob/', '/');
+        }
+        return u.href;
+      } catch(e){ return url; }
+    }
+
+    async function fetchGeoJSON(url){
+      const finalUrl = toRawIfGithub(url);
+      const res = await fetch(finalUrl, {cache: 'no-store'});
+      if(!res.ok){
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} al pedir ${finalUrl}. Ejemplo de respuesta: ${txt.substring(0,120)}...`);
+      }
+      const ct = res.headers.get('content-type') || '';
+      const text = await res.text();
+      if(ct.includes('html') || text.trim().startsWith('<')){
+        throw new Error(`La URL no devuelve JSON válido (recibí HTML/XML). Verifica la ruta o usa la URL RAW. URL: ${finalUrl}`);
+      }
+      try { return JSON.parse(text); }
+      catch(e){ throw new Error(`No pude parsear el GeoJSON (${finalUrl}). Detalle: ${e.message}. Primeros 80 chars: ${text.substring(0,80)}...`); }
+    }
+
     function detectField(props, preferredList, containsKey){
       if(!props) return null;
       const keys = Object.keys(props);
@@ -43,123 +80,146 @@
       if(contains) return contains;
       return keys.find(k => typeof props[k] === 'string') || null;
     }
- 
     function detectCircuitField(props){
       return detectField(props, ['Circuito','CIRCUITO','circuito','Circuit','CIRCUIT','circuit'], 'circuit');
     }
- 
-    // CARGA DE CAPAS
-    Promise.all([
-      fetch(CIRCUITOS_URL).then(r => r.json()),
-      fetch(MUNICIPIOS_URL).then(r => r.json())
-    ])
-    .then(([circuitsData, municipiosData]) => {
-      const overlays = {};
-      const allBounds = L.latLngBounds();
- 
-      // --- Municipios (polígonos) ---
-      const municipiosLayer = L.geoJSON(municipiosData, {
-        style: () => ({ color: '#444', weight: 1, fillOpacity: 0.05 })
-      });
-      municipiosLayer.addTo(map); // debajo de los circuitos
-      overlays['Municipios'] = municipiosLayer;
-      try { if(municipiosLayer.getBounds) allBounds.extend(municipiosLayer.getBounds()); } catch(e) {}
- 
-      // === Etiquetas de Municipios (una por municipio, usando propiedad "nombre") ===
-      const labelsPane = map.createPane('labels');
-      labelsPane.style.zIndex = 650; // por encima de polígonos
-      labelsPane.style.pointerEvents = 'none';
-      const municipioLabels = L.layerGroup([], { pane: 'labels' });
-      const muniFeats = (municipiosData.type === 'FeatureCollection') ? municipiosData.features : [municipiosData];
-      muniFeats.forEach(f => {
-        const props = f.properties || {};
-        const name = props.nombre || props.NOMBRE || props.Nombre;
-        if(!name) return;
-        try {
-          // punto más representativo dentro del polígono/multipolígono
-          const p = turf.pointOnFeature(f);
-          const [lng, lat] = p.geometry.coordinates;
-          const label = L.marker([lat, lng], { icon: L.divIcon({ className: 'mun-label', html: name }) });
-          municipioLabels.addLayer(label);
-        } catch(err) { /* continuar si algún feature falla */ }
-      });
-      municipioLabels.addTo(map);
-      overlays['Etiquetas Municipios'] = municipioLabels;
- 
-      // --- Circuitos (tramos) agrupados y coloreados ---
-      const feats = (circuitsData.type === 'FeatureCollection') ? circuitsData.features : [circuitsData];
-      if(!feats || !feats.length) throw new Error('El GeoJSON de circuitos no contiene features');
- 
-      const circuitField = detectCircuitField(feats[0].properties);
-      if(!circuitField) throw new Error('No se pudo detectar el campo de circuito en los tramos.');
- 
-      const groups = new Map();
-      for(const f of feats){
-        const p = f.properties || {};
-        const keyRaw = p[circuitField];
-        const key = (keyRaw === undefined || keyRaw === null || keyRaw === '') ? 'SIN_VALOR' : String(keyRaw);
-        if(!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(f);
-      }
- 
-      const entries = Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0], 'es'));
- 
-      // Guardar colección completa para búsqueda espacial
-      circuitsFC = { type:'FeatureCollection', features: feats };
- 
-      entries.forEach(([circuit, features], i) => {
-        const color = COLORS[i % COLORS.length];
-        const layer = L.geoJSON({type:'FeatureCollection', features}, {
-          style: () => ({ color, weight: 2, opacity: 0.9 }),
-          onEachFeature: (feature, layer) => {
-            const props = feature.properties || {};
-            const items = Object.entries(props).map(([k,v])=>`<b>${k}</b>: ${v}`);
-            layer.bindPopup(`<div style=\"min-width:220px\"><b>${circuitField}:</b> ${circuit}<br>${items.join('<br>')}</div>`);
-          }
-        });
-        layer.addTo(map);
-        overlays[`Circuito: ${circuit} (${features.length})`] = layer;
-        try { if(layer.getBounds) allBounds.extend(layer.getBounds()); } catch(e) {}
-      });
- 
-      if(allBounds.isValid()) map.fitBounds(allBounds, { padding: [20,20] });
- 
-      L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
- 
-      // Leyenda de circuitos
-      const legend = L.control({position: 'bottomleft'});
-      legend.onAdd = function(){
-        const div = L.DomUtil.create('div','legend');
-        div.innerHTML = '<b>Circuitos</b>';
-        entries.forEach(([circuit], i) => {
-          const color = COLORS[i % COLORS.length];
-          const row = document.createElement('div');
-          row.className = 'row';
-          const sw = document.createElement('span');
-          sw.className = 'swatch';
-          sw.style.background = color;
-          row.appendChild(sw);
-          const label = document.createElement('span');
-          label.textContent = circuit;
-          row.appendChild(label);
-          div.appendChild(row);
-        });
-        return div;
-      };
-      legend.addTo(map);
- 
-      // Intentar activar seguimiento automáticamente (algunos navegadores requieren interacción)
-      try { startFollow(); } catch(e) {}
-      const status = document.getElementById('status');
-      if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
-        status.style.display='block';
-        status.textContent='La geolocalización requiere HTTPS (GitHub Pages ya usa https)';
-      }
-    })
-    .catch(err => {
-      console.error(err);
-      alert('No se pudo cargar alguno de los GeoJSON. Revisa las rutas en el código.');
+
+    // =========================
+    //  GEOLOCALIZACIÓN ("seguir")
+    // =========================
+    const FollowControl = L.Control.extend({
+      onAdd: function(){
+        const btn = L.DomUtil.create('button');
+        btn.textContent = '📍 Seguirme';
+        btn.className = 'follow-btn';
+        btn.title = 'Activar/Desactivar seguimiento';
+        L.DomEvent.on(btn, 'click', (e)=>{ L.DomEvent.stop(e); toggleFollow(); });
+        return btn;
+      }, onRemove: function(){}
     });
-</script>
+    (new FollowControl({ position: 'topleft' })).addTo(map);
+
+    let watchId = null, isFollowing = false, meMarker = null, accCircle = null, highlightLayer = null;
+    let circuitsFC = null; // se rellena cuando cargamos tramos
+
+    function toggleFollow(){ isFollowing ? stopFollow() : startFollow(); }
+    function startFollow(){
+      if(!('geolocation' in navigator)) { setStatus('Tu navegador no soporta geolocalización'); return; }
+      setStatus('Intentando obtener tu ubicación...');
+      isFollowing = true;
+      watchId = navigator.geolocation.watchPosition(onPos, onGeoError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 });
+    }
+    function stopFollow(){ isFollowing = false; if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; } setStatus(''); }
+    function onGeoError(err){ setStatus(`No se pudo obtener tu ubicación: ${err.message}`); }
+    function updateMe(lng, lat, acc){
+      const ll = [lat, lng];
+      if(!meMarker){ meMarker = L.marker(ll, { title: 'Tú aquí' }).addTo(map); } else { meMarker.setLatLng(ll); }
+      if(!accCircle){ accCircle = L.circle(ll, { radius: acc||10, color:'#136aec', weight:1, fillOpacity:.1 }).addTo(map); } else { accCircle.setLatLng(ll); accCircle.setRadius(acc||10); }
+      if(isFollowing){ map.setView(ll, Math.max(map.getZoom(), 15)); }
+    }
+    function onPos(pos){
+      const { latitude:lat, longitude:lng, accuracy } = pos.coords;
+      updateMe(lng, lat, accuracy);
+      if(circuitsFC){
+        const p = turf.point([lng, lat]);
+        let best = { dist: Infinity, feat: null };
+        for(const f of circuitsFC.features){
+          if(f.geometry && (f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString')){
+            const d = turf.pointToLineDistance(p, f, { units: 'meters' });
+            if(d < best.dist){ best = { dist: d, feat: f }; }
+          }
+        }
+        if(best.feat){
+          if(highlightLayer){ map.removeLayer(highlightLayer); }
+          highlightLayer = L.geoJSON(best.feat, { style: { color: '#000', weight: 5, opacity: 0.9 } }).addTo(map);
+          const circField = detectCircuitField(best.feat.properties);
+          const circName = circField ? best.feat.properties[circField] : 'Desconocido';
+          const msg = `Tramo más cercano: <b>${circName ?? ''}</b> · ~${best.dist.toFixed(0)} m`;
+          meMarker && meMarker.bindPopup(msg).openPopup();
+        }
+      }
+    }
+
+    // =========================
+    //  CARGA DE CAPAS
+    // =========================
+    (async function init(){
+      try{
+        const [circuitsData, municipiosData] = await Promise.all([
+          fetchGeoJSON(CIRCUITOS_URL),
+          fetchGeoJSON(MUNICIPIOS_URL)
+        ]);
+
+        const overlays = {}; const allBounds = L.latLngBounds();
+
+        // Municipios (polígonos)
+        const municipiosLayer = L.geoJSON(municipiosData, { style: () => ({ color: '#444', weight: 1, fillOpacity: 0.05 }) });
+        municipiosLayer.addTo(map); overlays['Municipios'] = municipiosLayer;
+        try { if(municipiosLayer.getBounds) allBounds.extend(municipiosLayer.getBounds()); } catch(e) {}
+
+        // Etiquetas de Municipios (usa campo NOMBRE)
+        const labelsPane = map.createPane('labels'); labelsPane.style.zIndex = 650; labelsPane.style.pointerEvents = 'none';
+        const municipioLabels = L.layerGroup([], { pane: 'labels' });
+        const muniFeats = (municipiosData.type === 'FeatureCollection') ? municipiosData.features : [municipiosData];
+        muniFeats.forEach(f => {
+          const props = f.properties || {}; const name = (props.NOMBRE!=null)? String(props.NOMBRE) : null; if(!name) return;
+          try { const p = turf.pointOnFeature(f); const [lng, lat] = p.geometry.coordinates; const label = L.marker([lat, lng], { icon: L.divIcon({ className: 'mun-label', html: name }) }); municipioLabels.addLayer(label); } catch(err) {}
+        });
+        municipioLabels.addTo(map); overlays['Etiquetas Municipios'] = municipioLabels;
+
+        // Circuitos (tramos) agrupados y coloreados
+        const feats = (circuitsData.type === 'FeatureCollection') ? circuitsData.features : [circuitsData];
+        if(!feats || !feats.length) throw new Error('El GeoJSON de circuitos no contiene features');
+        const circuitField = detectCircuitField(feats[0].properties); if(!circuitField) throw new Error('No se pudo detectar el campo de circuito en los tramos.');
+        const groups = new Map();
+        for(const f of feats){ const p = f.properties || {}; const keyRaw = p[circuitField]; const key = (keyRaw==null || keyRaw==='') ? 'SIN_VALOR' : String(keyRaw); if(!groups.has(key)) groups.set(key, []); groups.get(key).push(f); }
+        const entries = Array.from(groups.entries()).sort((a,b)=>a[0].localeCompare(b[0], 'es'));
+        circuitsFC = { type:'FeatureCollection', features: feats };
+        entries.forEach(([circuit, features], i) => {
+          const color = COLORS[i % COLORS.length];
+          const layer = L.geoJSON({type:'FeatureCollection', features}, {
+            style: () => ({ color, weight: 2, opacity: 0.9 }),
+            onEachFeature: (feature, layer) => {
+              const props = feature.properties || {}; const items = Object.entries(props).map(([k,v])=>`<b>${k}</b>: ${v}`);
+              layer.bindPopup(`<div style=\"min-width:220px\"><b>${circuitField}:</b> ${circuit}<br>${items.join('<br>')}</div>`);
+            }
+          });
+          layer.addTo(map); overlays[`Circuito: ${circuit} (${features.length})`] = layer;
+          try { if(layer.getBounds) allBounds.extend(layer.getBounds()); } catch(e) {}
+        });
+
+        if(allBounds.isValid()) map.fitBounds(allBounds, { padding: [20,20] });
+        L.control.layers(null, overlays, { collapsed: false, position: 'topright' }).addTo(map);
+
+        // Intentar seguimiento automáticamente (el usuario puede necesitar aceptar permisos)
+        startFollow();
+        if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
+          setStatus('La geolocalización requiere HTTPS (GitHub Pages ya usa https)');
+        }
+      } catch(err){
+        console.error(err);
+        setStatus(err.message);
+        alert('No se pudo cargar alguno de los GeoJSON. Revisa la consola para el detalle y la ruta/URL RAW.');
+      }
+    })();
+
+    // =========================
+    //  TESTS RÁPIDOS (no bloquean la app)
+    // =========================
+    try {
+      // Test 1: Estructura básica GeoJSON
+      const sample = { type:'FeatureCollection', features:[ { type:'Feature', properties:{NOMBRE:'Test'}, geometry:{ type:'Polygon', coordinates:[ [[-86.2,14.6],[-86.0,14.6],[-86.0,14.7],[-86.2,14.7],[-86.2,14.6]] ] } } ] };
+      console.assert(sample.type==='FeatureCollection', 'Self-test: estructura GeoJSON');
+
+      // Test 2: URLs deben ser https y terminar en .geojson
+      console.assert(CIRCUITOS_URL.startsWith('https://') && CIRCUITOS_URL.endsWith('.geojson'), 'Self-test: URL de circuitos parece válida');
+      console.assert(MUNICIPIOS_URL.startsWith('https://') && MUNICIPIOS_URL.endsWith('.geojson'), 'Self-test: URL de municipios parece válida');
+
+      // Test 3: toRawIfGithub convierte /blob/
+      const blobUrl = 'https://github.com/u/repo/blob/main/file.geojson';
+      const rawUrl  = toRawIfGithub(blobUrl);
+      console.assert(rawUrl.includes('raw.githubusercontent.com') && !rawUrl.includes('/blob/'), 'Self-test: conversión blob->raw');
+    } catch(e) { console.warn('Self-tests fallaron:', e); }
+  </script>
 </body>
 </html>
