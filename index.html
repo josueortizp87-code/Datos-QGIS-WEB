@@ -11,11 +11,13 @@
     .legend { background: white; padding: 8px 10px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     .legend .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
     .swatch { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
-  .mun-label{ background:rgba(255,255,255,.85); padding:2px 6px; border-radius:6px; border:1px solid #cfcfcf; font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#222; white-space:nowrap; pointer-events:none; box-shadow:0 1px 2px rgba(0,0,0,.15); }
+  .mun-label{ background:rgba(255,255,255,.9); padding:2px 6px; border-radius:6px; border:1px solid #cfcfcf; font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#222; white-space:nowrap; pointer-events:none; box-shadow:0 1px 2px rgba(0,0,0,.15); }
+.status-badge{ position:absolute; left:10px; bottom:10px; background:rgba(0,0,0,.6); color:#fff; padding:4px 8px; border-radius:8px; font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; z-index:1000; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="status" class="status-badge" style="display:none"></div>
  
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
@@ -74,8 +76,9 @@
         const name = props.nombre || props.NOMBRE || props.Nombre;
         if(!name) return;
         try {
-          const c = turf.centroid(f);
-          const [lng, lat] = c.geometry.coordinates;
+          // punto más representativo dentro del polígono/multipolígono
+          const p = turf.pointOnFeature(f);
+          const [lng, lat] = p.geometry.coordinates;
           const label = L.marker([lat, lng], { icon: L.divIcon({ className: 'mun-label', html: name }) });
           municipioLabels.addLayer(label);
         } catch(err) { /* continuar si algún feature falla */ }
@@ -144,6 +147,14 @@
         return div;
       };
       legend.addTo(map);
+ 
+      // Intentar activar seguimiento automáticamente (algunos navegadores requieren interacción)
+      try { startFollow(); } catch(e) {}
+      const status = document.getElementById('status');
+      if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
+        status.style.display='block';
+        status.textContent='La geolocalización requiere HTTPS (GitHub Pages ya usa https)';
+      }
     })
     .catch(err => {
       console.error(err);
